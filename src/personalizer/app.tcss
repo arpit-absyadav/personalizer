@@ -6,7 +6,7 @@ Screen {
 
 #top {
     layout: horizontal;
-    height: 1fr;
+    height: 2fr;
 }
 
 #top NextHourWidget {
@@ -46,7 +46,8 @@ Screen {
 }
 
 TopicWidget {
-    height: auto;
+    height: 1fr;
+    min-height: 10;
 }
 
 #too-small {
