@@ -51,14 +51,19 @@ class PersonalizerApp(App):
         self.secrets = secrets
 
     def compose(self) -> ComposeResult:
+        left = Vertical(
+            NextHourWidget(lookahead_minutes=self.config.calendar.lookahead_minutes),
+            ReminderWidget(reminders=self.config.reminders),
+            id="left",
+        )
+        left.border_title = "🧠 NEXT HOUR"
         with Horizontal(id="top"):
-            yield NextHourWidget(lookahead_minutes=self.config.calendar.lookahead_minutes)
+            yield left
             with Vertical(id="top-right"):
-                yield ClockWidget()
-                yield WordWidget()
-                with Horizontal(id="status-row"):
+                with Horizontal(id="clock-row"):
+                    yield ClockWidget()
                     yield ProgressWidget()
-                    yield ReminderWidget(reminders=self.config.reminders)
+                yield WordWidget()
         yield TopicWidget(
             api_key=self.secrets.openai_api_key,
             model=self.config.openai.model,

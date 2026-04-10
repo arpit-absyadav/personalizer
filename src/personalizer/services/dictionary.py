@@ -1,13 +1,18 @@
 """Daily word service.
 
-Random word from random-word-api.vercel.app, definition from dictionaryapi.dev.
-Both are free and unauthenticated. random-word-api often returns obscure or
-non-English words; we retry up to 5 times before falling back to a bundled list
-of common-but-interesting words.
+Picks an intermediate-level (B2-C1 CEFR) English vocabulary word from a
+curated list and fetches its definition from dictionaryapi.dev.
+
+The list targets a learner who already speaks intermediate English and wants
+to level up — words encountered in news articles, novels, and professional
+writing, but not in casual day-to-day chat. Trivial words ("random", "weird",
+"podcast") and obscure ones ("perspicacious", "sesquipedalian") are both
+deliberately excluded.
 """
 
 from __future__ import annotations
 
+import random
 from typing import Any
 
 import httpx
@@ -15,47 +20,40 @@ import httpx
 from .. import paths
 from . import cache
 
-RANDOM_WORD_URL = "https://random-word-api.vercel.app/api?words=1"
 DEFINITION_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
-MAX_RETRIES = 5
-MAX_DEFINITION_LEN = 80
+MAX_DEFINITION_LEN = 200
 
-# Curated fallback words — guaranteed to resolve in dictionaryapi.dev.
-FALLBACK_WORDS = [
-    "ephemeral",
-    "ubiquitous",
-    "serendipity",
-    "ineffable",
-    "petrichor",
-    "halcyon",
-    "luminous",
-    "quintessential",
-    "ethereal",
-    "esoteric",
-    "magnanimous",
-    "perspicacious",
-    "sonorous",
-    "mellifluous",
-    "tenacious",
-    "intrepid",
-    "sublime",
-    "vicarious",
-    "elucidate",
-    "recalcitrant",
+# Curated B2-C1 vocabulary for an intermediate-to-upper-intermediate learner.
+# Every entry must resolve in dictionaryapi.dev.
+INTERMEDIATE_WORDS = [
+    "abate", "alleviate", "ambiguous", "ambivalent", "amend", "anomaly",
+    "arbitrary", "articulate", "augment", "austere", "authentic", "benevolent",
+    "brevity", "candid", "capricious", "censure", "coerce", "coherent",
+    "compelling", "complacent", "comprehensive", "concede", "concur",
+    "consensus", "conspicuous", "contemplate", "contend", "conundrum",
+    "convoluted", "credible", "cynical", "debunk", "decisive", "deference",
+    "deride", "deter", "didactic", "diligent", "disdain", "disparage",
+    "dubious", "eclectic", "elusive", "eminent", "empathy", "endorse",
+    "enigma", "ephemeral", "equivocal", "erudite", "evoke", "exacerbate",
+    "exemplary", "facilitate", "fastidious", "fervent", "frugal", "futile",
+    "hindrance", "immerse", "impede", "impeccable", "impetuous", "inadvertent",
+    "incessant", "incisive", "indignant", "indispensable", "inevitable",
+    "innocuous", "intrepid", "intricate", "intuitive", "juxtapose", "laconic",
+    "lethargic", "lucid", "magnanimous", "meticulous", "mundane", "nebulous",
+    "nonchalant", "notorious", "oblivious", "obscure", "ominous",
+    "ostentatious", "paradigm", "paramount", "pertinent", "placate",
+    "plausible", "poignant", "pragmatic", "prevalent", "profound", "prominent",
+    "prudent", "quintessential", "rapport", "reconcile", "refute", "relinquish",
+    "reproach", "resilient", "scrutinize", "serene", "skeptical", "somber",
+    "sophisticated", "stoic", "succinct", "superfluous", "tactful", "tedious",
+    "tenacious", "thorough", "transient", "trivial", "ubiquitous",
+    "unprecedented", "vehement", "viable", "vigilant", "voracious", "wary",
+    "zealous",
 ]
 
 
 class WordUnavailable(Exception):
     pass
-
-
-async def _random_word(client: httpx.AsyncClient) -> str:
-    resp = await client.get(RANDOM_WORD_URL, timeout=10)
-    resp.raise_for_status()
-    data = resp.json()
-    if not isinstance(data, list) or not data:
-        raise WordUnavailable("random-word-api returned empty payload")
-    return str(data[0]).strip().lower()
 
 
 async def _definition(client: httpx.AsyncClient, word: str) -> str | None:
@@ -77,29 +75,16 @@ async def _definition(client: httpx.AsyncClient, word: str) -> str | None:
 
 
 async def fetch_word() -> dict[str, str]:
-    """Try several random words; fall back to a bundled list. Returns {word, meaning}."""
+    """Pick an intermediate word and fetch its definition. Returns {word, meaning}."""
     async with httpx.AsyncClient() as client:
-        for _ in range(MAX_RETRIES):
-            try:
-                word = await _random_word(client)
-            except (httpx.HTTPError, WordUnavailable):
-                break  # random-word-api itself is down — go to fallback
-            meaning = await _definition(client, word)
-            if meaning:
-                return {"word": word, "meaning": meaning}
-
-        # Fallback list — try until one resolves.
-        import random
-
-        for word in random.sample(FALLBACK_WORDS, len(FALLBACK_WORDS)):
+        for word in random.sample(INTERMEDIATE_WORDS, len(INTERMEDIATE_WORDS)):
             try:
                 meaning = await _definition(client, word)
             except httpx.HTTPError:
                 continue
             if meaning:
                 return {"word": word, "meaning": meaning}
-
-    raise WordUnavailable("Could not fetch any word from APIs or fallback list.")
+    raise WordUnavailable("Could not fetch a definition for any intermediate word.")
 
 
 async def get_word(force: bool = False) -> dict[str, Any]:
