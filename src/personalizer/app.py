@@ -7,7 +7,7 @@ from pathlib import Path
 
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Footer, Static
 
@@ -51,18 +51,20 @@ class PersonalizerApp(App):
         self.secrets = secrets
 
     def compose(self) -> ComposeResult:
-        yield NextHourWidget(lookahead_minutes=self.config.calendar.lookahead_minutes)
-        yield ClockWidget()
-        yield ProgressWidget()
-        yield ReminderWidget(reminders=self.config.reminders)
-        with Vertical(id="bottom"):
-            yield TopicWidget(
-                api_key=self.secrets.openai_api_key,
-                model=self.config.openai.model,
-                experience_level=self.config.openai.experience_level,
-                topic_areas=self.config.openai.topic_areas,
-            )
-            yield WordWidget()
+        with Horizontal(id="top"):
+            yield NextHourWidget(lookahead_minutes=self.config.calendar.lookahead_minutes)
+            with Vertical(id="top-right"):
+                yield ClockWidget()
+                yield WordWidget()
+                with Horizontal(id="status-row"):
+                    yield ProgressWidget()
+                    yield ReminderWidget(reminders=self.config.reminders)
+        yield TopicWidget(
+            api_key=self.secrets.openai_api_key,
+            model=self.config.openai.model,
+            experience_level=self.config.openai.experience_level,
+            topic_areas=self.config.openai.topic_areas,
+        )
         yield Footer()
 
     def on_mount(self) -> None:

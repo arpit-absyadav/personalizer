@@ -35,9 +35,14 @@ def _build_system_prompt(experience_level: str, topic_areas: list[str]) -> str:
         f"Pick topics ONLY from these areas: {areas_text}. "
         "Skip beginner material — assume the reader already knows fundamentals "
         "and is looking for depth, edge cases, trade-offs, or advanced patterns. "
-        'Return JSON with two fields: "topic" (a short concept name, 1-4 words) '
-        'and "explanation" (about 300 characters total, in 2-4 sentences, '
-        "covering what it is, why it matters, and one practical insight or trade-off). "
+        "Return JSON with three fields:\n"
+        '  "topic" — a short concept name (1-4 words).\n'
+        '  "explanation" — about 300 characters in 2-4 sentences, covering what it is, '
+        "why it matters, and one practical insight or trade-off.\n"
+        '  "vocab" — an array of EXACTLY 2 objects {"word", "meaning"}, where each '
+        "word is pulled VERBATIM from your explanation above (pick the two most "
+        "noteworthy or jargony terms that a learner might not already know), and "
+        '"meaning" is a plain-English definition of 8-15 words.\n'
         "Pick a fresh, varied concept each time. No preamble, no markdown."
     )
 
@@ -114,14 +119,31 @@ def record_topic(topic: str, path: Path = paths.CACHE_TOPIC_HISTORY) -> None:
 # ---- API call -----------------------------------------------------------
 
 
+def _parse_vocab(raw: Any) -> list[dict[str, str]]:
+    """Coerce model output into a list of {word, meaning} dicts (max 2)."""
+    if not isinstance(raw, list):
+        return []
+    out: list[dict[str, str]] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        word = str(item.get("word", "")).strip()
+        meaning = str(item.get("meaning", "")).strip()
+        if word and meaning:
+            out.append({"word": word, "meaning": meaning})
+        if len(out) == 2:
+            break
+    return out
+
+
 async def fetch_topic(
     api_key: str,
     model: str = "gpt-4o-mini",
     recent_topics: list[str] | None = None,
     experience_level: str = DEFAULT_EXPERIENCE,
     topic_areas: list[str] | None = None,
-) -> dict[str, str]:
-    """Call OpenAI and return {'topic': ..., 'explanation': ...}."""
+) -> dict[str, Any]:
+    """Call OpenAI and return {'topic', 'explanation', 'vocab'}."""
     if not api_key:
         raise TopicUnavailable("OPENAI_API_KEY is not set.")
 
@@ -154,7 +176,11 @@ async def fetch_topic(
     explanation = str(data.get("explanation", "")).strip()
     if not topic or not explanation:
         raise TopicUnavailable("OpenAI response missing topic/explanation.")
-    return {"topic": topic, "explanation": explanation}
+    return {
+        "topic": topic,
+        "explanation": explanation,
+        "vocab": _parse_vocab(data.get("vocab")),
+    }
 
 
 async def get_topic(

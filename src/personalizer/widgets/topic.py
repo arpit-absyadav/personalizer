@@ -29,6 +29,10 @@ class TopicWidget(Widget):
         color: $text;
         padding-top: 1;
     }
+    TopicWidget #topic-vocab {
+        color: $secondary;
+        padding-top: 1;
+    }
     TopicWidget .error {
         color: $error;
     }
@@ -53,6 +57,7 @@ class TopicWidget(Widget):
         with Vertical():
             yield Static("Loading…", id="topic-name")
             yield Static("", id="topic-body")
+            yield Static("", id="topic-vocab")
 
     def on_mount(self) -> None:
         self.refresh_topic()
@@ -80,8 +85,15 @@ class TopicWidget(Widget):
             self._show_error(f"Unexpected error: {e}")
             return
         self.query_one("#topic-name", Static).update(f"Topic: {data['topic']}")
-        self.query_one("#topic-body", Static).update(data["explanation"])
-        self.query_one("#topic-body", Static).remove_class("error")
+        body = self.query_one("#topic-body", Static)
+        body.update(data["explanation"])
+        body.remove_class("error")
+        vocab_lines = [
+            f"• [b]{v['word']}[/b] — {v['meaning']}"
+            for v in data.get("vocab", [])
+        ]
+        vocab_text = "📖 Vocab:\n" + "\n".join(vocab_lines) if vocab_lines else ""
+        self.query_one("#topic-vocab", Static).update(vocab_text)
 
     def _show_error(self, msg: str) -> None:
         self.query_one("#topic-name", Static).update("Topic: (unavailable)")
