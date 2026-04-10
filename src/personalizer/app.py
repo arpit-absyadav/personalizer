@@ -12,8 +12,11 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Static
 
 from .config import AppConfig, Secrets, load_config, load_secrets
+from .logging_setup import get_logger, setup_logging
 from .services import gcal
 from .services.gcal import Event
+
+logger = get_logger("app")
 from .widgets.clock import ClockWidget
 from .widgets.next_hour import NextHourWidget
 from .widgets.progress import ProgressWidget
@@ -122,9 +125,11 @@ class PersonalizerApp(App):
                 24,
             )
         except gcal.CalendarUnavailable as e:
+            logger.exception("calendar unavailable")
             self.notify(str(e), severity="error", timeout=10)
             return
         except Exception as e:  # noqa: BLE001
+            logger.exception("calendar fetch failed")
             self.notify(f"Calendar fetch failed: {e}", severity="error", timeout=10)
             return
         self.calendar_events = events
@@ -132,8 +137,14 @@ class PersonalizerApp(App):
 
 def make_app() -> PersonalizerApp:
     """Factory used by `textual run --dev personalizer.app:make_app`."""
+    setup_logging()
     config = load_config()
     secrets = load_secrets()
+    logger.info(
+        "starting; openai_key_set=%s calendar_id=%s",
+        bool(secrets.openai_api_key),
+        config.calendar.id,
+    )
     return PersonalizerApp(config=config, secrets=secrets)
 
 

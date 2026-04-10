@@ -7,7 +7,10 @@ from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Static
 
+from ..logging_setup import get_logger
 from ..services import openai_topic
+
+logger = get_logger("topic")
 
 
 class TopicWidget(Widget):
@@ -69,7 +72,12 @@ class TopicWidget(Widget):
                 topic_areas=self.topic_areas,
             )
         except openai_topic.TopicUnavailable as e:
+            logger.exception("topic fetch failed (force=%s)", force)
             self._show_error(str(e))
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("topic fetch crashed (force=%s)", force)
+            self._show_error(f"Unexpected error: {e}")
             return
         self.query_one("#topic-name", Static).update(f"Topic: {data['topic']}")
         self.query_one("#topic-body", Static).update(data["explanation"])

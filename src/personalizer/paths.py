@@ -12,6 +12,7 @@ ROOT = Path.home() / ".personalizer"
 
 CONFIG_FILE = ROOT / "config.yaml"
 ENV_FILE = ROOT / ".env"
+LOG_FILE = ROOT / "personalizer.log"
 
 GOOGLE_DIR = ROOT / "google"
 GOOGLE_CREDENTIALS = GOOGLE_DIR / "credentials.json"

@@ -7,7 +7,10 @@ from textual.containers import Vertical
 from textual.widget import Widget
 from textual.widgets import Static
 
+from ..logging_setup import get_logger
 from ..services import dictionary
+
+logger = get_logger("word")
 
 
 class WordWidget(Widget):
@@ -52,7 +55,12 @@ class WordWidget(Widget):
         try:
             data = await dictionary.get_word(force=force)
         except dictionary.WordUnavailable as e:
+            logger.exception("word fetch failed (force=%s)", force)
             self._show_error(str(e))
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("word fetch crashed (force=%s)", force)
+            self._show_error(f"Unexpected error: {e}")
             return
         self.query_one("#word-name", Static).update(f"Word: {data['word'].title()}")
         self.query_one("#word-body", Static).update(data["meaning"])
