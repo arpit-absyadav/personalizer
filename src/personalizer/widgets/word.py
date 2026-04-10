@@ -1,0 +1,65 @@
+"""Daily word widget (dictionary-backed)."""
+
+from __future__ import annotations
+
+from textual.app import ComposeResult
+from textual.containers import Vertical
+from textual.widget import Widget
+from textual.widgets import Static
+
+from ..services import dictionary
+
+
+class WordWidget(Widget):
+    """Shows one word + meaning per day, refreshing on date change."""
+
+    DEFAULT_CSS = """
+    WordWidget {
+        border: round $primary;
+        padding: 1 2;
+    }
+    WordWidget #word-name {
+        text-style: bold;
+        color: $accent;
+    }
+    WordWidget #word-body {
+        color: $text;
+        padding-top: 1;
+    }
+    WordWidget .error {
+        color: $error;
+    }
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.border_title = "🧠 WORD"
+
+    def compose(self) -> ComposeResult:
+        with Vertical():
+            yield Static("Loading…", id="word-name")
+            yield Static("", id="word-body")
+
+    def on_mount(self) -> None:
+        self.refresh_word()
+        # Check every hour; cache.is_today gate keeps API calls to once per day.
+        self.set_interval(3600.0, self.refresh_word)
+
+    def refresh_word(self, force: bool = False) -> None:
+        self.run_worker(self._fetch(force), exclusive=True, group="word")
+
+    async def _fetch(self, force: bool) -> None:
+        try:
+            data = await dictionary.get_word(force=force)
+        except dictionary.WordUnavailable as e:
+            self._show_error(str(e))
+            return
+        self.query_one("#word-name", Static).update(f"Word: {data['word'].title()}")
+        self.query_one("#word-body", Static).update(data["meaning"])
+        self.query_one("#word-body", Static).remove_class("error")
+
+    def _show_error(self, msg: str) -> None:
+        self.query_one("#word-name", Static).update("Word: (unavailable)")
+        body = self.query_one("#word-body", Static)
+        body.update(msg)
+        body.add_class("error")
