@@ -47,9 +47,9 @@ class NextHourWidget(Widget):
             yield Static("Loading…", classes="empty")
 
     def watch_events(self, events: list[Event]) -> None:
-        self._render(events)
+        self._render_events(events)
 
-    def _render(self, events: list[Event]) -> None:
+    def _render_events(self, events: list[Event]) -> None:
         container = self.query_one("#event-list", Vertical)
         container.remove_children()
         now = datetime.now(timezone.utc)

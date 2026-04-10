@@ -32,13 +32,13 @@ class ReminderWidget(Widget):
         yield Static("", id="reminder-text")
 
     def on_mount(self) -> None:
-        self._render()
+        self._refresh_text()
         self.set_interval(60.0, self._advance)
 
     def _advance(self) -> None:
         self._index = (self._index + 1) % len(self.reminders)
-        self._render()
+        self._refresh_text()
 
-    def _render(self) -> None:
+    def _refresh_text(self) -> None:
         text = self.reminders[self._index]
         self.query_one("#reminder-text", Static).update(f"💧 {text}")
