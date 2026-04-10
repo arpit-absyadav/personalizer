@@ -19,6 +19,7 @@ GOOGLE_TOKEN = GOOGLE_DIR / "token.json"
 
 CACHE_DIR = ROOT / "cache"
 CACHE_TOPIC = CACHE_DIR / "topic.json"
+CACHE_TOPIC_HISTORY = CACHE_DIR / "topic_history.json"
 CACHE_WORD = CACHE_DIR / "word.json"
 
 

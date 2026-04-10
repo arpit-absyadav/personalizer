@@ -16,6 +16,21 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from . import paths
 
 
+DEFAULT_TOPIC_AREAS = [
+    "System design (HLD)",
+    "Low-level design (LLD) and OOP patterns",
+    "Data structures and algorithms",
+    "Node.js and NestJS internals",
+    "React and modern frontend architecture",
+    "AI engineering (LLMs, RAG, agents, evals)",
+    "Data engineering (pipelines, warehousing, streaming)",
+    "Data analysis and analytics engineering",
+    "DevOps (CI/CD, Kubernetes, observability)",
+    "MLOps and AIOps",
+    "Distributed systems and scalability",
+    "Database internals and query optimization",
+]
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "reminders": [
         "Drink water",
@@ -26,7 +41,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     ],
     "work_hours": {"start": "09:00", "end": "18:00"},
     "calendar": {"id": "primary", "lookahead_minutes": 60},
-    "openai": {"model": "gpt-4o-mini"},
+    "openai": {
+        "model": "gpt-4o-mini",
+        "experience_level": "senior software engineer with 8+ years of experience",
+        "topic_areas": DEFAULT_TOPIC_AREAS,
+    },
 }
 
 
@@ -42,6 +61,8 @@ class CalendarConfig(BaseModel):
 
 class OpenAIConfig(BaseModel):
     model: str = "gpt-4o-mini"
+    experience_level: str = "senior software engineer with 8+ years of experience"
+    topic_areas: list[str] = Field(default_factory=lambda: list(DEFAULT_TOPIC_AREAS))
 
 
 class AppConfig(BaseModel):

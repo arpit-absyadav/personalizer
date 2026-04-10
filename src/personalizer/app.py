@@ -56,6 +56,8 @@ class PersonalizerApp(App):
             yield TopicWidget(
                 api_key=self.secrets.openai_api_key,
                 model=self.config.openai.model,
+                experience_level=self.config.openai.experience_level,
+                topic_areas=self.config.openai.topic_areas,
             )
             yield WordWidget()
         yield Footer()
@@ -128,7 +130,12 @@ class PersonalizerApp(App):
         self.calendar_events = events
 
 
-def run() -> None:
+def make_app() -> PersonalizerApp:
+    """Factory used by `textual run --dev personalizer.app:make_app`."""
     config = load_config()
     secrets = load_secrets()
-    PersonalizerApp(config=config, secrets=secrets).run()
+    return PersonalizerApp(config=config, secrets=secrets)
+
+
+def run() -> None:
+    make_app().run()

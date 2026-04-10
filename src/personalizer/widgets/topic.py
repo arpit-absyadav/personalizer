@@ -31,10 +31,19 @@ class TopicWidget(Widget):
     }
     """
 
-    def __init__(self, api_key: str, model: str = "gpt-4o-mini", **kwargs) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        model: str = "gpt-4o-mini",
+        experience_level: str = "senior software engineer with 8+ years of experience",
+        topic_areas: list[str] | None = None,
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
         self.api_key = api_key
         self.model = model
+        self.experience_level = experience_level
+        self.topic_areas = topic_areas or []
         self.border_title = "📘 TOPIC"
 
     def compose(self) -> ComposeResult:
@@ -52,7 +61,13 @@ class TopicWidget(Widget):
 
     async def _fetch(self, force: bool) -> None:
         try:
-            data = await openai_topic.get_topic(self.api_key, self.model, force=force)
+            data = await openai_topic.get_topic(
+                self.api_key,
+                self.model,
+                force=force,
+                experience_level=self.experience_level,
+                topic_areas=self.topic_areas,
+            )
         except openai_topic.TopicUnavailable as e:
             self._show_error(str(e))
             return
