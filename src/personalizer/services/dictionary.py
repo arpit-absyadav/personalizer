@@ -56,34 +56,66 @@ class WordUnavailable(Exception):
     pass
 
 
-async def _definition(client: httpx.AsyncClient, word: str) -> str | None:
+def _truncate(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) > limit:
+        text = text[: limit - 1].rstrip() + "…"
+    return text
+
+
+async def _definition(
+    client: httpx.AsyncClient, word: str
+) -> dict[str, str] | None:
+    """Return {meaning, example} for `word`, or None if no usable entry exists.
+
+    Walks every definition (across all parts of speech) so we can prefer one
+    that has both a definition AND an example sentence. Falls back to the
+    first definition-only entry if no example is available anywhere.
+    """
     resp = await client.get(DEFINITION_URL.format(word=word), timeout=10)
     if resp.status_code == 404:
         return None
     resp.raise_for_status()
     data = resp.json()
+    if not isinstance(data, list) or not data:
+        return None
+
+    fallback: dict[str, str] | None = None
     try:
-        meaning = data[0]["meanings"][0]["definitions"][0]["definition"]
-    except (KeyError, IndexError, TypeError):
+        meanings = data[0].get("meanings", [])
+    except (AttributeError, KeyError):
         return None
-    if not isinstance(meaning, str) or not meaning.strip():
-        return None
-    text = meaning.strip()
-    if len(text) > MAX_DEFINITION_LEN:
-        text = text[: MAX_DEFINITION_LEN - 1].rstrip() + "…"
-    return text
+
+    for meaning_block in meanings:
+        for defn in meaning_block.get("definitions", []):
+            text = defn.get("definition")
+            if not isinstance(text, str) or not text.strip():
+                continue
+            entry = {"meaning": _truncate(text, MAX_DEFINITION_LEN), "example": ""}
+            example = defn.get("example")
+            if isinstance(example, str) and example.strip():
+                entry["example"] = _truncate(example, MAX_DEFINITION_LEN)
+                return entry
+            if fallback is None:
+                fallback = entry
+
+    return fallback
 
 
 async def fetch_word() -> dict[str, str]:
-    """Pick an intermediate word and fetch its definition. Returns {word, meaning}."""
+    """Pick an intermediate word and fetch it. Returns {word, meaning, example}."""
     async with httpx.AsyncClient() as client:
         for word in random.sample(INTERMEDIATE_WORDS, len(INTERMEDIATE_WORDS)):
             try:
-                meaning = await _definition(client, word)
+                entry = await _definition(client, word)
             except httpx.HTTPError:
                 continue
-            if meaning:
-                return {"word": word, "meaning": meaning}
+            if entry:
+                return {
+                    "word": word,
+                    "meaning": entry["meaning"],
+                    "example": entry.get("example", ""),
+                }
     raise WordUnavailable("Could not fetch a definition for any intermediate word.")
 
 

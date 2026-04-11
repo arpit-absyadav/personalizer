@@ -29,6 +29,11 @@ class WordWidget(Widget):
         color: $text;
         padding-top: 1;
     }
+    WordWidget #word-example {
+        color: $text-muted;
+        text-style: italic;
+        padding-top: 1;
+    }
     WordWidget .error {
         color: $error;
     }
@@ -42,6 +47,7 @@ class WordWidget(Widget):
         with Vertical():
             yield Static("Loading…", id="word-name")
             yield Static("", id="word-body")
+            yield Static("", id="word-example")
 
     def on_mount(self) -> None:
         self.refresh_word()
@@ -63,8 +69,12 @@ class WordWidget(Widget):
             self._show_error(f"Unexpected error: {e}")
             return
         self.query_one("#word-name", Static).update(f"Word: {data['word'].title()}")
-        self.query_one("#word-body", Static).update(data["meaning"])
-        self.query_one("#word-body", Static).remove_class("error")
+        body = self.query_one("#word-body", Static)
+        body.update(data["meaning"])
+        body.remove_class("error")
+        example = data.get("example", "")
+        example_widget = self.query_one("#word-example", Static)
+        example_widget.update(f"e.g. {example}" if example else "")
 
     def _show_error(self, msg: str) -> None:
         self.query_one("#word-name", Static).update("Word: (unavailable)")
