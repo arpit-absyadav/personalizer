@@ -66,3 +66,34 @@ def test_progress_week_excludes_other_weeks() -> None:
         _evt(datetime(2026, 4, 7, 9, 0, tzinfo=timezone.utc)),  # this week, done
     ]
     assert progress_week(events, now) == 100
+
+
+def test_progress_today_counts_manually_done_future_event() -> None:
+    """A future event flagged done in calendar should count as done immediately."""
+    now = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
+    events = [
+        Event(
+            summary="manual",
+            start=datetime(2026, 4, 10, 15, 0, tzinfo=timezone.utc),  # later today
+            end=datetime(2026, 4, 10, 15, 30, tzinfo=timezone.utc),
+            done=True,
+        ),
+        _evt(datetime(2026, 4, 10, 16, 0, tzinfo=timezone.utc)),  # later today, not done
+    ]
+    assert progress_today(events, now) == 50
+
+
+def test_progress_today_excludes_cancelled_from_denominator() -> None:
+    """Cancelled events should drop out of the denominator entirely."""
+    now = datetime(2026, 4, 10, 12, 0, tzinfo=timezone.utc)
+    events = [
+        _evt(datetime(2026, 4, 10, 9, 0, tzinfo=timezone.utc)),  # done by clock
+        Event(
+            summary="cancelled",
+            start=datetime(2026, 4, 10, 15, 0, tzinfo=timezone.utc),
+            end=datetime(2026, 4, 10, 15, 30, tzinfo=timezone.utc),
+            cancelled=True,
+        ),
+    ]
+    # Only the non-cancelled event counts; it's done → 100%, not 50%.
+    assert progress_today(events, now) == 100

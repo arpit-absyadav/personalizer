@@ -17,7 +17,12 @@ from dateutil import parser as dtparser
 
 from .. import paths
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+
+DONE_PREFIX = "✓ "
+CANCELLED_PREFIX = "✗ "
+EXT_DONE_KEY = "personalizer_done"
+EXT_CANCELLED_KEY = "personalizer_cancelled"
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,9 @@ class Event:
     summary: str
     start: datetime
     end: datetime
+    id: str = ""
+    done: bool = False
+    cancelled: bool = False
 
     @property
     def is_all_day(self) -> bool:
@@ -34,7 +42,17 @@ class Event:
         return self.start <= now < self.end
 
     def is_done(self, now: datetime) -> bool:
-        return self.end <= now
+        return self.done or self.end <= now
+
+    def state(self, now: datetime) -> str:
+        """One of: cancelled, done, active, upcoming. Drives row colour."""
+        if self.cancelled:
+            return "cancelled"
+        if self.done or self.end <= now:
+            return "done"
+        if self.start <= now:
+            return "active"
+        return "upcoming"
 
 
 class CalendarUnavailable(Exception):
@@ -86,7 +104,22 @@ def _parse_event(raw: dict[str, Any]) -> Event | None:
         start = start.astimezone()
     if end.tzinfo is None:
         end = end.astimezone()
-    return Event(summary=summary, start=start, end=end)
+    ext_private = raw.get("extendedProperties", {}).get("private", {}) or {}
+    done = ext_private.get(EXT_DONE_KEY) == "1"
+    cancelled = ext_private.get(EXT_CANCELLED_KEY) == "1"
+    # Strip our visual prefixes so the displayed title stays clean.
+    if summary.startswith(DONE_PREFIX):
+        summary = summary[len(DONE_PREFIX):]
+    elif summary.startswith(CANCELLED_PREFIX):
+        summary = summary[len(CANCELLED_PREFIX):]
+    return Event(
+        summary=summary,
+        start=start,
+        end=end,
+        id=raw.get("id", ""),
+        done=done,
+        cancelled=cancelled,
+    )
 
 
 def fetch_events(calendar_id: str = "primary", lookahead_hours: int = 24) -> list[Event]:
@@ -125,10 +158,18 @@ def filter_next_hour(
 
 
 def progress_today(events: list[Event], now: datetime) -> int:
-    """Percentage (0-100) of today's timed events that have ended."""
+    """Percentage (0-100) of today's timed events that have ended.
+
+    Cancelled events drop out of the denominator entirely; manually-done
+    events count toward the numerator regardless of clock time.
+    """
     today = now.astimezone().date()
     todays = [
-        e for e in events if e.start.astimezone().date() == today and not e.is_all_day
+        e
+        for e in events
+        if e.start.astimezone().date() == today
+        and not e.is_all_day
+        and not e.cancelled
     ]
     if not todays:
         return 0
@@ -144,9 +185,65 @@ def progress_week(events: list[Event], now: datetime) -> int:
     weeks = [
         e
         for e in events
-        if monday <= e.start.astimezone().date() <= sunday and not e.is_all_day
+        if monday <= e.start.astimezone().date() <= sunday
+        and not e.is_all_day
+        and not e.cancelled
     ]
     if not weeks:
         return 0
     done = sum(1 for e in weeks if e.is_done(now))
     return round(100 * done / len(weeks))
+
+
+# ---- write operations ---------------------------------------------------
+
+
+def _patch_event(
+    calendar_id: str,
+    event_id: str,
+    *,
+    set_done: bool = False,
+    set_cancelled: bool = False,
+) -> None:
+    """Apply a personalizer flag to a Google Calendar event.
+
+    Sets the matching extendedProperties.private key AND prefixes the summary
+    with ✓ / ✗ so the marker shows up in the Google Calendar UI as well.
+    Idempotent: safe to call twice on the same event.
+    """
+    service = _build_service()
+    current = service.events().get(calendarId=calendar_id, eventId=event_id).execute()
+    summary = current.get("summary", "")
+    # Strip any existing personalizer prefix so we don't double up.
+    if summary.startswith(DONE_PREFIX):
+        summary = summary[len(DONE_PREFIX):]
+    elif summary.startswith(CANCELLED_PREFIX):
+        summary = summary[len(CANCELLED_PREFIX):]
+
+    private: dict[str, str] = {}
+    if set_done:
+        private[EXT_DONE_KEY] = "1"
+        private[EXT_CANCELLED_KEY] = ""  # clear opposing flag
+        summary = DONE_PREFIX + summary
+    elif set_cancelled:
+        private[EXT_CANCELLED_KEY] = "1"
+        private[EXT_DONE_KEY] = ""
+        summary = CANCELLED_PREFIX + summary
+
+    body = {
+        "summary": summary,
+        "extendedProperties": {"private": private},
+    }
+    service.events().patch(
+        calendarId=calendar_id, eventId=event_id, body=body
+    ).execute()
+
+
+def mark_done(calendar_id: str, event_id: str) -> None:
+    """Mark a calendar event as personalizer-done. Synchronous — wrap in to_thread."""
+    _patch_event(calendar_id, event_id, set_done=True)
+
+
+def mark_cancelled(calendar_id: str, event_id: str) -> None:
+    """Mark a calendar event as personalizer-cancelled. Synchronous — wrap in to_thread."""
+    _patch_event(calendar_id, event_id, set_cancelled=True)

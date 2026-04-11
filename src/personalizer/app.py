@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -41,6 +42,17 @@ class PersonalizerApp(App):
         Binding("c", "refresh_calendar", "Calendar"),
         Binding("t", "refresh_topic", "Topic"),
         Binding("w", "refresh_word", "Word"),
+        Binding("d", "mark_done", "Done"),
+        Binding("x", "mark_cancelled", "Cancel"),
+        Binding("1", "select_event(0)", show=False),
+        Binding("2", "select_event(1)", show=False),
+        Binding("3", "select_event(2)", show=False),
+        Binding("4", "select_event(3)", show=False),
+        Binding("5", "select_event(4)", show=False),
+        Binding("up", "select_prev", show=False),
+        Binding("down", "select_next", show=False),
+        Binding("k", "select_prev", show=False),
+        Binding("j", "select_next", show=False),
     ]
 
     calendar_events: reactive[list[Event]] = reactive(list)
@@ -140,6 +152,60 @@ class PersonalizerApp(App):
             self.notify(f"Calendar fetch failed: {e}", severity="error", timeout=10)
             return
         self.calendar_events = events
+
+    # ---- selection ----
+
+    def action_select_event(self, idx: int) -> None:
+        for w in self.query(NextHourWidget):
+            w.selected_index = idx
+
+    def action_select_prev(self) -> None:
+        for w in self.query(NextHourWidget):
+            w.selected_index = max(0, w.selected_index - 1)
+
+    def action_select_next(self) -> None:
+        for w in self.query(NextHourWidget):
+            w.selected_index = w.selected_index + 1  # widget clamps on render
+
+    # ---- mark done / cancelled ----
+
+    def action_mark_done(self) -> None:
+        self.run_worker(self._mark_selected("done"), exclusive=True, group="mark")
+
+    def action_mark_cancelled(self) -> None:
+        self.run_worker(self._mark_selected("cancelled"), exclusive=True, group="mark")
+
+    async def _mark_selected(self, kind: str) -> None:
+        """Mark the currently selected event in the next-hour list."""
+        try:
+            nh = self.query_one(NextHourWidget)
+        except Exception:
+            self.notify("Next-hour widget not mounted.", severity="error")
+            return
+        target = nh.selected_event()
+        if target is None:
+            self.notify("No event in the next hour.", severity="warning")
+            return
+        if not target.id:
+            self.notify("Event missing ID — cannot update calendar.", severity="error")
+            return
+        action = gcal.mark_done if kind == "done" else gcal.mark_cancelled
+        try:
+            await asyncio.to_thread(action, self.config.calendar.id, target.id)
+        except gcal.CalendarUnavailable as e:
+            logger.exception("mark %s: calendar unavailable", kind)
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("mark %s failed for event %s", kind, target.id)
+            msg = f"Mark {kind} failed: {e}"
+            err = str(e).lower()
+            if "403" in err or "insufficient" in err or "scope" in err:
+                msg += "  — re-run `personalizer-setup` to grant write access."
+            self.notify(msg, severity="error", timeout=12)
+            return
+        self.notify(f"Marked '{target.summary[:40]}' as {kind}.", timeout=4)
+        await self._fetch_calendar()
 
 
 def make_app() -> PersonalizerApp:
