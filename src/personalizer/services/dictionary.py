@@ -119,21 +119,78 @@ async def fetch_word() -> dict[str, str]:
     raise WordUnavailable("Could not fetch a definition for any intermediate word.")
 
 
-async def get_word(force: bool = False) -> dict[str, Any]:
+async def _example_via_openai(
+    word: str, api_key: str, model: str = "gpt-4o-mini"
+) -> str:
+    """Ask OpenAI for one short example sentence. Returns '' on any failure.
+
+    Used as a fallback when dictionaryapi.dev has no example for the word.
+    Silent on errors — the caller treats an empty string as "no example".
+    """
+    if not api_key or not word:
+        return ""
+    try:
+        from openai import AsyncOpenAI
+    except ImportError:
+        return ""
+
+    client = AsyncOpenAI(api_key=api_key)
+    prompt = (
+        f'Write ONE simple natural English example sentence using the word "{word}". '
+        "8 to 15 words. Demonstrate the word's meaning clearly in context. "
+        "Reply with ONLY the sentence — no quotes, no preamble, no markdown."
+    )
+    try:
+        resp = await client.chat.completions.create(
+            model=model,
+            temperature=0.7,
+            max_tokens=80,
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except Exception:  # noqa: BLE001
+        return ""
+
+    text = (resp.choices[0].message.content or "").strip().strip('"').strip()
+    if not text:
+        return ""
+    return _truncate(text, MAX_DEFINITION_LEN)
+
+
+async def get_word(
+    force: bool = False,
+    openai_api_key: str = "",
+    openai_model: str = "gpt-4o-mini",
+) -> dict[str, Any]:
     """Return cached word if fetched today, else fetch a new one.
 
-    On API failure, falls back to the stale cache if available.
+    If the resulting entry has no example sentence and an OpenAI key is
+    provided, generates one via OpenAI and persists it back to the cache so
+    subsequent reads are instant. On dictionary API failure, falls back to
+    the stale cache if available.
     """
     cached = cache.read(paths.CACHE_WORD)
-    if not force and cache.is_today(cached):
-        return cached  # type: ignore[return-value]
 
-    try:
-        fresh = await fetch_word()
-    except WordUnavailable:
-        if cached:
-            return cached
-        raise
+    if not force and cache.is_today(cached) and cached:
+        result: dict[str, Any] = cached
+    else:
+        try:
+            fresh = await fetch_word()
+        except WordUnavailable:
+            if cached:
+                result = cached
+            else:
+                raise
+        else:
+            cache.write(paths.CACHE_WORD, fresh)
+            result = cache.read(paths.CACHE_WORD) or fresh
 
-    cache.write(paths.CACHE_WORD, fresh)
-    return cache.read(paths.CACHE_WORD) or fresh
+    # Backfill example sentence via OpenAI if dictionary didn't supply one.
+    if not result.get("example") and openai_api_key and result.get("word"):
+        example = await _example_via_openai(
+            str(result["word"]), openai_api_key, openai_model
+        )
+        if example:
+            result = {**result, "example": example}
+            cache.write(paths.CACHE_WORD, result)
+
+    return result

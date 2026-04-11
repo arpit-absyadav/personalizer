@@ -87,7 +87,10 @@ class PersonalizerApp(App):
                 with Horizontal(id="clock-row"):
                     yield ClockWidget()
                     yield ProgressWidget()
-                yield WordWidget()
+                yield WordWidget(
+                    api_key=self.secrets.openai_api_key,
+                    model=self.config.openai.model,
+                )
         yield TopicWidget(
             api_key=self.secrets.openai_api_key,
             model=self.config.openai.model,

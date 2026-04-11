@@ -39,8 +39,15 @@ class WordWidget(Widget):
     }
     """
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(
+        self,
+        api_key: str = "",
+        model: str = "gpt-4o-mini",
+        **kwargs,
+    ) -> None:
         super().__init__(**kwargs)
+        self.api_key = api_key
+        self.model = model
         self.border_title = "🧠 WORD"
 
     def compose(self) -> ComposeResult:
@@ -59,7 +66,11 @@ class WordWidget(Widget):
 
     async def _fetch(self, force: bool) -> None:
         try:
-            data = await dictionary.get_word(force=force)
+            data = await dictionary.get_word(
+                force=force,
+                openai_api_key=self.api_key,
+                openai_model=self.model,
+            )
         except dictionary.WordUnavailable as e:
             logger.exception("word fetch failed (force=%s)", force)
             self._show_error(str(e))
