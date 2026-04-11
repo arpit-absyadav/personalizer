@@ -1,4 +1,4 @@
-"""Next-hour calendar events widget."""
+"""Calendar events widget — next-hour, today, or this-week view."""
 
 from __future__ import annotations
 
@@ -10,16 +10,30 @@ from textual.reactive import reactive
 from textual.widget import Widget
 from textual.widgets import Static
 
-from ..services.gcal import Event, filter_next_hour
+from ..services.gcal import Event, filter_next_hour, filter_today, filter_week
+
+VIEW_HOUR = "hour"
+VIEW_DAY = "day"
+VIEW_WEEK = "week"
+VIEW_MODES = (VIEW_HOUR, VIEW_DAY, VIEW_WEEK)
+VIEW_LABELS = {
+    VIEW_HOUR: "🧠 NEXT HOUR",
+    VIEW_DAY: "📅 TODAY",
+    VIEW_WEEK: "📆 THIS WEEK",
+}
+VIEW_LIMITS = {VIEW_HOUR: 5, VIEW_DAY: 20, VIEW_WEEK: 50}
 
 
 class NextHourWidget(Widget):
-    """Lists up to 5 events that fall within the next 60 minutes."""
+    """Lists calendar events in one of three view modes (hour/day/week)."""
 
     DEFAULT_CSS = """
     NextHourWidget {
         border: round $primary;
         padding: 1 2;
+    }
+    NextHourWidget #event-list {
+        overflow-y: auto;
     }
     NextHourWidget .empty {
         color: $text-muted;
@@ -49,11 +63,12 @@ class NextHourWidget(Widget):
 
     events: reactive[list[Event]] = reactive(list, layout=True)
     selected_index: reactive[int] = reactive(0)
+    view_mode: reactive[str] = reactive(VIEW_HOUR)
 
     def __init__(self, lookahead_minutes: int = 60, **kwargs) -> None:
         super().__init__(**kwargs)
         self.lookahead_minutes = lookahead_minutes
-        self.border_title = "🧠 NEXT HOUR"
+        self.border_title = VIEW_LABELS[VIEW_HOUR]
 
     def compose(self) -> ComposeResult:
         with Vertical(id="event-list"):
@@ -70,37 +85,65 @@ class NextHourWidget(Widget):
     def watch_selected_index(self, _old: int, _new: int) -> None:
         self._render_events(self.events)
 
+    def watch_view_mode(self, _old: str, new: str) -> None:
+        self.border_title = VIEW_LABELS.get(new, VIEW_LABELS[VIEW_HOUR])
+        # Reset selection to top when changing modes — cleaner UX than
+        # leaving it pointing at row N of a different list.
+        self.selected_index = 0
+        self._render_events(self.events)
+
+    def cycle_view_mode(self) -> None:
+        idx = (VIEW_MODES.index(self.view_mode) + 1) % len(VIEW_MODES)
+        self.view_mode = VIEW_MODES[idx]
+
     def _refresh_view(self) -> None:
         self._render_events(self.events)
 
     def _visible_events(self) -> list[Event]:
         now = datetime.now(timezone.utc)
-        return filter_next_hour(self.events, now, self.lookahead_minutes, limit=5)
+        if self.view_mode == VIEW_DAY:
+            return filter_today(self.events, now, limit=VIEW_LIMITS[VIEW_DAY])
+        if self.view_mode == VIEW_WEEK:
+            return filter_week(self.events, now, limit=VIEW_LIMITS[VIEW_WEEK])
+        return filter_next_hour(
+            self.events, now, self.lookahead_minutes, limit=VIEW_LIMITS[VIEW_HOUR]
+        )
 
     def selected_event(self) -> Event | None:
         """Return the currently selected event, or None if the list is empty."""
-        upcoming = self._visible_events()
-        if not upcoming:
+        visible = self._visible_events()
+        if not visible:
             return None
-        idx = max(0, min(self.selected_index, len(upcoming) - 1))
-        return upcoming[idx]
+        idx = max(0, min(self.selected_index, len(visible) - 1))
+        return visible[idx]
 
-    def _render_events(self, events: list[Event]) -> None:
+    def _render_events(self, _events: list[Event]) -> None:
         container = self.query_one("#event-list", Vertical)
         container.remove_children()
         now = datetime.now(timezone.utc)
-        upcoming = filter_next_hour(events, now, self.lookahead_minutes, limit=5)
-        if not upcoming:
-            container.mount(Static("Nothing in the next hour.", classes="empty"))
+        visible = self._visible_events()
+        if not visible:
+            container.mount(
+                Static(
+                    {
+                        VIEW_HOUR: "Nothing in the next hour.",
+                        VIEW_DAY: "Nothing scheduled today.",
+                        VIEW_WEEK: "Nothing scheduled this week.",
+                    }.get(self.view_mode, "Nothing to show."),
+                    classes="empty",
+                )
+            )
             return
-        sel = max(0, min(self.selected_index, len(upcoming) - 1))
-        for i, evt in enumerate(upcoming):
+        sel = max(0, min(self.selected_index, len(visible) - 1))
+        for i, evt in enumerate(visible):
             local_start = evt.start.astimezone()
-            time_str = local_start.strftime("%I:%M %p").lstrip("0")
+            if self.view_mode == VIEW_WEEK:
+                time_str = local_start.strftime("%a %I:%M%p").lstrip("0")
+            else:
+                time_str = local_start.strftime("%I:%M %p").lstrip("0")
             state = evt.state(now)
             marker = {"active": "→", "done": "✓", "cancelled": "✗"}.get(state, " ")
-            # Number prefix so the user can see which key picks which row.
-            line = f"{i + 1}.{marker} {time_str}  {evt.summary}"
+            line = f"{i + 1:>2}.{marker} {time_str}  {evt.summary}"
             classes = f"event {state}"
             if i == sel:
                 classes += " selected"

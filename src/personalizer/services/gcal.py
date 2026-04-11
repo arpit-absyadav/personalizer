@@ -124,22 +124,32 @@ def _parse_event(raw: dict[str, Any]) -> Event | None:
 
 def fetch_events(calendar_id: str = "primary", lookahead_hours: int = 24) -> list[Event]:
     """Fetch events from now to now + lookahead_hours. Synchronous — wrap in to_thread."""
-    service = _build_service()
     now = datetime.now(timezone.utc)
     horizon = now + timedelta(hours=lookahead_hours)
     # Look back to start-of-week so progress math has a complete week to count.
     week_start = (now - timedelta(days=now.weekday())).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+    return fetch_events_range(calendar_id, week_start, horizon)
+
+
+def fetch_events_range(
+    calendar_id: str,
+    time_min: datetime,
+    time_max: datetime,
+    max_results: int = 250,
+) -> list[Event]:
+    """Generic range fetcher. Synchronous — wrap in to_thread."""
+    service = _build_service()
     response = (
         service.events()
         .list(
             calendarId=calendar_id,
-            timeMin=week_start.isoformat(),
-            timeMax=horizon.isoformat(),
+            timeMin=time_min.astimezone(timezone.utc).isoformat(),
+            timeMax=time_max.astimezone(timezone.utc).isoformat(),
             singleEvents=True,
             orderBy="startTime",
-            maxResults=250,
+            maxResults=max_results,
         )
         .execute()
     )
@@ -155,6 +165,30 @@ def filter_next_hour(
     upcoming = [e for e in events if e.end > now and e.start <= horizon and not e.is_all_day]
     upcoming.sort(key=lambda e: e.start)
     return upcoming[:limit]
+
+
+def filter_today(events: list[Event], now: datetime, limit: int = 20) -> list[Event]:
+    """Return up to `limit` of today's timed events (past and future)."""
+    today = now.astimezone().date()
+    todays = [
+        e for e in events if e.start.astimezone().date() == today and not e.is_all_day
+    ]
+    todays.sort(key=lambda e: e.start)
+    return todays[:limit]
+
+
+def filter_week(events: list[Event], now: datetime, limit: int = 50) -> list[Event]:
+    """Return up to `limit` of this ISO week's timed events."""
+    local_now = now.astimezone()
+    monday = local_now.date() - timedelta(days=local_now.weekday())
+    sunday = monday + timedelta(days=6)
+    weeks = [
+        e
+        for e in events
+        if monday <= e.start.astimezone().date() <= sunday and not e.is_all_day
+    ]
+    weeks.sort(key=lambda e: e.start)
+    return weeks[:limit]
 
 
 def progress_today(events: list[Event], now: datetime) -> int:
@@ -247,3 +281,46 @@ def mark_done(calendar_id: str, event_id: str) -> None:
 def mark_cancelled(calendar_id: str, event_id: str) -> None:
     """Mark a calendar event as personalizer-cancelled. Synchronous — wrap in to_thread."""
     _patch_event(calendar_id, event_id, set_cancelled=True)
+
+
+def _event_body(summary: str, start: datetime, end: datetime) -> dict[str, Any]:
+    return {
+        "summary": summary,
+        "start": {"dateTime": start.astimezone().isoformat()},
+        "end": {"dateTime": end.astimezone().isoformat()},
+    }
+
+
+def create_event(
+    calendar_id: str, summary: str, start: datetime, end: datetime
+) -> str:
+    """Create a new event. Returns the new event id. Synchronous — wrap in to_thread."""
+    service = _build_service()
+    created = (
+        service.events()
+        .insert(calendarId=calendar_id, body=_event_body(summary, start, end))
+        .execute()
+    )
+    return str(created.get("id", ""))
+
+
+def update_event(
+    calendar_id: str,
+    event_id: str,
+    summary: str,
+    start: datetime,
+    end: datetime,
+) -> None:
+    """Update an event's title + time. Synchronous — wrap in to_thread."""
+    service = _build_service()
+    service.events().patch(
+        calendarId=calendar_id,
+        eventId=event_id,
+        body=_event_body(summary, start, end),
+    ).execute()
+
+
+def delete_event(calendar_id: str, event_id: str) -> None:
+    """Delete an event from the calendar. Synchronous — wrap in to_thread."""
+    service = _build_service()
+    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()

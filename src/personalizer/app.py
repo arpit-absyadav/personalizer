@@ -16,14 +16,15 @@ from .config import AppConfig, Secrets, load_config, load_secrets
 from .logging_setup import get_logger, setup_logging
 from .services import gcal
 from .services.gcal import Event
-
-logger = get_logger("app")
 from .widgets.clock import ClockWidget
-from .widgets.next_hour import NextHourWidget
+from .widgets.event_modal import ConfirmModal, EventEditModal
+from .widgets.next_hour import VIEW_LABELS, NextHourWidget
 from .widgets.progress import ProgressWidget
 from .widgets.reminder import ReminderWidget
 from .widgets.topic import TopicWidget
 from .widgets.word import WordWidget
+
+logger = get_logger("app")
 
 MIN_WIDTH = 80
 MIN_HEIGHT = 24
@@ -38,21 +39,27 @@ class PersonalizerApp(App):
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
-        Binding("r", "refresh_all", "Refresh all"),
-        Binding("c", "refresh_calendar", "Calendar"),
-        Binding("t", "refresh_topic", "Topic"),
-        Binding("w", "refresh_word", "Word"),
+        Binding("r", "refresh_all", "Refresh"),
+        Binding("v", "cycle_view", "View"),
+        Binding("a", "add_event", "Add"),
+        Binding("e", "edit_event", "Edit"),
+        Binding("shift+d", "delete_event", "Delete"),
         Binding("d", "mark_done", "Done"),
         Binding("x", "mark_cancelled", "Cancel"),
+        Binding("c", "refresh_calendar", "Cal", show=False),
+        Binding("t", "refresh_topic", "Topic", show=False),
+        Binding("w", "refresh_word", "Word", show=False),
         Binding("1", "select_event(0)", show=False),
         Binding("2", "select_event(1)", show=False),
         Binding("3", "select_event(2)", show=False),
         Binding("4", "select_event(3)", show=False),
         Binding("5", "select_event(4)", show=False),
-        Binding("up", "select_prev", show=False),
-        Binding("down", "select_next", show=False),
-        Binding("k", "select_prev", show=False),
-        Binding("j", "select_next", show=False),
+        # priority=True so the app receives arrow keys even when a focusable
+        # child (Footer) would otherwise consume them for tab traversal.
+        Binding("up", "select_prev", show=False, priority=True),
+        Binding("down", "select_next", show=False, priority=True),
+        Binding("k", "select_prev", show=False, priority=True),
+        Binding("j", "select_next", show=False, priority=True),
     ]
 
     calendar_events: reactive[list[Event]] = reactive(list)
@@ -167,6 +174,32 @@ class PersonalizerApp(App):
         for w in self.query(NextHourWidget):
             w.selected_index = w.selected_index + 1  # widget clamps on render
 
+    # ---- view mode ----
+
+    def action_cycle_view(self) -> None:
+        for w in self.query(NextHourWidget):
+            w.cycle_view_mode()
+        try:
+            mode = self.query_one(NextHourWidget).view_mode
+            self.query_one("#left").border_title = VIEW_LABELS[mode]
+        except Exception:
+            pass
+
+    # ---- selection helpers ----
+
+    def _selected_event(self) -> Event | None:
+        try:
+            return self.query_one(NextHourWidget).selected_event()
+        except Exception:
+            return None
+
+    def _format_error(self, base: str, exc: Exception) -> str:
+        msg = f"{base}: {exc}"
+        err = str(exc).lower()
+        if "403" in err or "insufficient" in err or "scope" in err:
+            msg += "  — re-run `personalizer-setup` to grant write access."
+        return msg
+
     # ---- mark done / cancelled ----
 
     def action_mark_done(self) -> None:
@@ -176,15 +209,9 @@ class PersonalizerApp(App):
         self.run_worker(self._mark_selected("cancelled"), exclusive=True, group="mark")
 
     async def _mark_selected(self, kind: str) -> None:
-        """Mark the currently selected event in the next-hour list."""
-        try:
-            nh = self.query_one(NextHourWidget)
-        except Exception:
-            self.notify("Next-hour widget not mounted.", severity="error")
-            return
-        target = nh.selected_event()
+        target = self._selected_event()
         if target is None:
-            self.notify("No event in the next hour.", severity="warning")
+            self.notify("No event selected.", severity="warning")
             return
         if not target.id:
             self.notify("Event missing ID — cannot update calendar.", severity="error")
@@ -198,13 +225,102 @@ class PersonalizerApp(App):
             return
         except Exception as e:  # noqa: BLE001
             logger.exception("mark %s failed for event %s", kind, target.id)
-            msg = f"Mark {kind} failed: {e}"
-            err = str(e).lower()
-            if "403" in err or "insufficient" in err or "scope" in err:
-                msg += "  — re-run `personalizer-setup` to grant write access."
-            self.notify(msg, severity="error", timeout=12)
+            self.notify(self._format_error(f"Mark {kind} failed", e), severity="error", timeout=12)
             return
         self.notify(f"Marked '{target.summary[:40]}' as {kind}.", timeout=4)
+        await self._fetch_calendar()
+
+    # ---- CRUD ----
+
+    def action_add_event(self) -> None:
+        self.run_worker(self._add_event_flow(), group="crud")
+
+    def action_edit_event(self) -> None:
+        self.run_worker(self._edit_event_flow(), group="crud")
+
+    def action_delete_event(self) -> None:
+        self.run_worker(self._delete_event_flow(), group="crud")
+
+    async def _add_event_flow(self) -> None:
+        result = await self.push_screen_wait(EventEditModal())
+        if result is None:
+            return
+        try:
+            await asyncio.to_thread(
+                gcal.create_event,
+                self.config.calendar.id,
+                result["summary"],
+                result["start"],
+                result["end"],
+            )
+        except gcal.CalendarUnavailable as e:
+            logger.exception("create event: calendar unavailable")
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("create event failed")
+            self.notify(self._format_error("Create failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Created '{result['summary'][:40]}'.")
+        await self._fetch_calendar()
+
+    async def _edit_event_flow(self) -> None:
+        target = self._selected_event()
+        if target is None:
+            self.notify("No event selected.", severity="warning")
+            return
+        if not target.id:
+            self.notify("Event missing ID — cannot edit.", severity="error")
+            return
+        result = await self.push_screen_wait(EventEditModal(event=target))
+        if result is None:
+            return
+        try:
+            await asyncio.to_thread(
+                gcal.update_event,
+                self.config.calendar.id,
+                target.id,
+                result["summary"],
+                result["start"],
+                result["end"],
+            )
+        except gcal.CalendarUnavailable as e:
+            logger.exception("update event: calendar unavailable")
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("update event %s failed", target.id)
+            self.notify(self._format_error("Update failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Updated '{result['summary'][:40]}'.")
+        await self._fetch_calendar()
+
+    async def _delete_event_flow(self) -> None:
+        target = self._selected_event()
+        if target is None:
+            self.notify("No event selected.", severity="warning")
+            return
+        if not target.id:
+            self.notify("Event missing ID — cannot delete.", severity="error")
+            return
+        confirmed = await self.push_screen_wait(
+            ConfirmModal(f"Delete '{target.summary[:50]}'?")
+        )
+        if not confirmed:
+            return
+        try:
+            await asyncio.to_thread(
+                gcal.delete_event, self.config.calendar.id, target.id
+            )
+        except gcal.CalendarUnavailable as e:
+            logger.exception("delete event: calendar unavailable")
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("delete event %s failed", target.id)
+            self.notify(self._format_error("Delete failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Deleted '{target.summary[:40]}'.")
         await self._fetch_calendar()
 
 
