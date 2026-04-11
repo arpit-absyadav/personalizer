@@ -1,8 +1,8 @@
-"""Modal screens for event CRUD: create/edit form and delete confirmation."""
+"""Modal screens: event create/edit, delete confirmation, and start-soon reminder."""
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from textual.app import ComposeResult
@@ -12,6 +12,8 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Input, Static
 
 from ..services.gcal import Event
+
+REMINDER_AUTO_DISMISS_SECONDS = 300  # 5 minutes
 
 DATE_FORMAT = "%Y-%m-%d %H:%M"
 
@@ -199,3 +201,92 @@ class ConfirmModal(ModalScreen[bool]):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         self.dismiss(event.button.id == "yes")
+
+
+class EventReminderModal(ModalScreen[None]):
+    """Compact 'event starts soon' popup. Auto-dismisses after 5 minutes."""
+
+    DEFAULT_CSS = """
+    EventReminderModal {
+        align: center middle;
+    }
+    EventReminderModal #reminder-dialog {
+        width: 56;
+        height: auto;
+        padding: 1 2;
+        background: $surface;
+        border: round $warning;
+    }
+    EventReminderModal Static.title {
+        color: $warning;
+        text-style: bold;
+        padding-bottom: 1;
+    }
+    EventReminderModal Static.event-title {
+        color: $accent;
+        text-style: bold;
+    }
+    EventReminderModal Static.event-time {
+        color: $text;
+        padding-top: 1;
+    }
+    EventReminderModal Static.event-countdown {
+        color: $warning;
+        text-style: bold;
+        padding-top: 1;
+    }
+    EventReminderModal #buttons {
+        height: 3;
+        align: right middle;
+        padding-top: 1;
+    }
+    """
+
+    BINDINGS = [
+        Binding("escape", "close", show=False),
+        Binding("enter", "close", show=False),
+    ]
+
+    def __init__(self, event: Event) -> None:
+        super().__init__()
+        self.event = event
+        self._timer = None  # type: ignore[var-annotated]
+
+    def compose(self) -> ComposeResult:
+        local_start = self.event.start.astimezone()
+        now = datetime.now(timezone.utc)
+        minutes_until = max(
+            0, int((self.event.start - now).total_seconds() // 60)
+        )
+        minutes_label = "minute" if minutes_until == 1 else "minutes"
+        with Vertical(id="reminder-dialog"):
+            yield Static("⏰  COMING UP", classes="title")
+            yield Static(self.event.summary, classes="event-title")
+            yield Static(
+                f"Starts at {local_start.strftime('%I:%M %p').lstrip('0')}",
+                classes="event-time",
+            )
+            yield Static(
+                f"In {minutes_until} {minutes_label}", classes="event-countdown"
+            )
+            with Horizontal(id="buttons"):
+                yield Button("Dismiss", id="dismiss", variant="primary")
+
+    def on_mount(self) -> None:
+        # Auto-dismiss after 5 minutes; user can also press Esc/Enter or click.
+        self._timer = self.set_timer(
+            REMINDER_AUTO_DISMISS_SECONDS, self.action_close
+        )
+
+    def action_close(self) -> None:
+        if self._timer is not None:
+            self._timer.stop()
+            self._timer = None
+        try:
+            self.dismiss()
+        except Exception:  # noqa: BLE001
+            # Already dismissed (timer fired after manual close); ignore.
+            pass
+
+    def on_button_pressed(self, _event: Button.Pressed) -> None:
+        self.action_close()

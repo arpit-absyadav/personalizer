@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from textual.app import App, ComposeResult
@@ -17,7 +17,7 @@ from .logging_setup import get_logger, setup_logging
 from .services import gcal
 from .services.gcal import Event
 from .widgets.clock import ClockWidget
-from .widgets.event_modal import ConfirmModal, EventEditModal
+from .widgets.event_modal import ConfirmModal, EventEditModal, EventReminderModal
 from .widgets.next_hour import VIEW_LABELS, NextHourWidget
 from .widgets.progress import ProgressWidget
 from .widgets.reminder import ReminderWidget
@@ -29,6 +29,8 @@ logger = get_logger("app")
 MIN_WIDTH = 80
 MIN_HEIGHT = 24
 CALENDAR_REFRESH_SECONDS = 300
+REMINDER_CHECK_SECONDS = 30
+REMINDER_LEAD_MINUTES = 10
 
 
 class PersonalizerApp(App):
@@ -68,6 +70,9 @@ class PersonalizerApp(App):
         super().__init__(**kwargs)
         self.config = config
         self.secrets = secrets
+        # Event IDs we've already shown a "starts soon" reminder for, so the
+        # popup doesn't re-fire on the next 30s tick.
+        self._reminded_event_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         left = Vertical(
@@ -95,6 +100,7 @@ class PersonalizerApp(App):
         self._maybe_show_too_small()
         self.action_refresh_calendar()
         self.set_interval(CALENDAR_REFRESH_SECONDS, self.action_refresh_calendar)
+        self.set_interval(REMINDER_CHECK_SECONDS, self._check_upcoming_reminders)
 
     def on_resize(self) -> None:
         self._maybe_show_too_small()
@@ -124,6 +130,9 @@ class PersonalizerApp(App):
             w.events = events
         for w in self.query(ProgressWidget):
             w.events = events
+        # Re-check immediately after a refetch so a freshly-added event that's
+        # already inside the 10-minute window pops a reminder right away.
+        self._check_upcoming_reminders()
 
     # ---- actions ----
 
@@ -173,6 +182,50 @@ class PersonalizerApp(App):
     def action_select_next(self) -> None:
         for w in self.query(NextHourWidget):
             w.selected_index = w.selected_index + 1  # widget clamps on render
+
+    # ---- start-soon reminder ----
+
+    def _check_upcoming_reminders(self) -> None:
+        """Pop a reminder modal for any event starting within the next 10 min.
+
+        Each event triggers at most once (tracked in self._reminded_event_ids).
+        Only one reminder modal is on screen at a time — if one is already
+        open, this tick is a no-op.
+        """
+        if not self.calendar_events:
+            return
+        # Don't stack reminders on top of each other.
+        for screen in self.screen_stack:
+            if isinstance(screen, EventReminderModal):
+                return
+
+        now = datetime.now(timezone.utc)
+        horizon = now + timedelta(minutes=REMINDER_LEAD_MINUTES)
+
+        # Garbage-collect ids whose events have already ended so the set
+        # doesn't grow without bound across days.
+        live_ids = {e.id for e in self.calendar_events if e.id and e.end > now}
+        self._reminded_event_ids &= live_ids
+
+        # Earliest qualifying event wins.
+        candidates = sorted(
+            (
+                e
+                for e in self.calendar_events
+                if e.id
+                and e.id not in self._reminded_event_ids
+                and not e.cancelled
+                and not e.done
+                and not e.is_all_day
+                and now < e.start <= horizon
+            ),
+            key=lambda e: e.start,
+        )
+        if not candidates:
+            return
+        target = candidates[0]
+        self._reminded_event_ids.add(target.id)
+        self.push_screen(EventReminderModal(target))
 
     # ---- view mode ----
 

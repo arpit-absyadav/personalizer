@@ -72,6 +72,14 @@ def _build_service():
         )
 
     creds = Credentials.from_authorized_user_file(str(paths.GOOGLE_TOKEN), SCOPES)
+    # Pre-flight scope check: detect tokens still issued under the old read-only
+    # scope and surface the fix steps before the user hits a 403.
+    if not creds.has_scopes(SCOPES):
+        raise CalendarUnavailable(
+            "Token is missing the calendar.events scope (write access). "
+            "Delete ~/.personalizer/google/token.json and re-run "
+            "`personalizer-setup` to grant the new permission."
+        )
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             try:
