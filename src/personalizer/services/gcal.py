@@ -17,7 +17,10 @@ from dateutil import parser as dtparser
 
 from .. import paths
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/tasks",
+]
 
 DONE_PREFIX = "✓ "
 CANCELLED_PREFIX = "✗ "
@@ -59,12 +62,14 @@ class CalendarUnavailable(Exception):
     """Raised when credentials are missing or refresh fails."""
 
 
-def _build_service():
-    """Build a Google Calendar API client. Imports happen lazily so the rest of
-    the app (and tests) can run without google-* installed if needed."""
+def load_credentials():
+    """Load and refresh OAuth credentials. Shared by gcal + gtasks services.
+
+    Lazy imports so tests and the rest of the app can run without google-*
+    installed if needed.
+    """
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
-    from googleapiclient.discovery import build
 
     if not paths.GOOGLE_TOKEN.exists():
         raise CalendarUnavailable(
@@ -72,13 +77,13 @@ def _build_service():
         )
 
     creds = Credentials.from_authorized_user_file(str(paths.GOOGLE_TOKEN), SCOPES)
-    # Pre-flight scope check: detect tokens still issued under the old read-only
-    # scope and surface the fix steps before the user hits a 403.
+    # Pre-flight scope check: detect tokens still issued under an older scope
+    # set and surface the fix steps before the user hits a 403.
     if not creds.has_scopes(SCOPES):
         raise CalendarUnavailable(
-            "Token is missing the calendar.events scope (write access). "
+            "Token is missing required scopes (calendar.events + tasks). "
             "Delete ~/.personalizer/google/token.json and re-run "
-            "`personalizer-setup` to grant the new permission."
+            "`personalizer-setup` to grant the new permissions."
         )
     if not creds.valid:
         if creds.expired and creds.refresh_token:
@@ -92,7 +97,14 @@ def _build_service():
         else:
             raise CalendarUnavailable("Invalid credentials. Re-run `personalizer-setup`.")
 
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    return creds
+
+
+def _build_service():
+    """Build a Google Calendar API client."""
+    from googleapiclient.discovery import build
+
+    return build("calendar", "v3", credentials=load_credentials(), cache_discovery=False)
 
 
 def _parse_event(raw: dict[str, Any]) -> Event | None:

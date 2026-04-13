@@ -14,11 +14,19 @@ from textual.widgets import Footer, Static
 
 from .config import AppConfig, Secrets, load_config, load_secrets
 from .logging_setup import get_logger, setup_logging
-from .services import gcal
+from .services import gcal, gtasks
 from .services.gcal import Event
+from .services.gtasks import Task
 from .widgets.clock import ClockWidget
 from .widgets.event_modal import ConfirmModal, EventEditModal, EventReminderModal
-from .widgets.next_hour import VIEW_LABELS, NextHourWidget
+from .widgets.tasks_screen import TaskEditModal, TasksScreen
+from .widgets.next_hour import (
+    VIEW_DAY,
+    VIEW_HOUR,
+    VIEW_LABELS,
+    VIEW_WEEK,
+    NextHourWidget,
+)
 from .widgets.progress import ProgressWidget
 from .widgets.reminder import ReminderWidget
 from .widgets.topic import TopicWidget
@@ -29,6 +37,7 @@ logger = get_logger("app")
 MIN_WIDTH = 80
 MIN_HEIGHT = 24
 CALENDAR_REFRESH_SECONDS = 300
+TASKS_REFRESH_SECONDS = 600
 REMINDER_CHECK_SECONDS = 30
 REMINDER_LEAD_MINUTES = 10
 
@@ -42,12 +51,16 @@ class PersonalizerApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "refresh_all", "Refresh"),
-        Binding("v", "cycle_view", "View"),
+        Binding("H", "view_hour", "Hour"),
+        Binding("T", "view_today", "Day"),
+        Binding("W", "view_week", "Week"),
         Binding("a", "add_event", "Add"),
         Binding("e", "edit_event", "Edit"),
         Binding("shift+d", "delete_event", "Delete"),
+        Binding("g", "open_tasks", "Tasks"),
         Binding("d", "mark_done", "Done"),
         Binding("x", "mark_cancelled", "Cancel"),
+        Binding("v", "cycle_view", show=False),
         Binding("c", "refresh_calendar", "Cal", show=False),
         Binding("t", "refresh_topic", "Topic", show=False),
         Binding("w", "refresh_word", "Word", show=False),
@@ -65,6 +78,7 @@ class PersonalizerApp(App):
     ]
 
     calendar_events: reactive[list[Event]] = reactive(list)
+    google_tasks: reactive[list[Task]] = reactive(list)
 
     def __init__(self, config: AppConfig, secrets: Secrets, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -102,7 +116,9 @@ class PersonalizerApp(App):
     def on_mount(self) -> None:
         self._maybe_show_too_small()
         self.action_refresh_calendar()
+        self.action_refresh_tasks()
         self.set_interval(CALENDAR_REFRESH_SECONDS, self.action_refresh_calendar)
+        self.set_interval(TASKS_REFRESH_SECONDS, self.action_refresh_tasks)
         self.set_interval(REMINDER_CHECK_SECONDS, self._check_upcoming_reminders)
 
     def on_resize(self) -> None:
@@ -137,15 +153,39 @@ class PersonalizerApp(App):
         # already inside the 10-minute window pops a reminder right away.
         self._check_upcoming_reminders()
 
+    def watch_google_tasks(self, tasks: list[Task]) -> None:
+        for w in self.query(ReminderWidget):
+            w.tasks = tasks
+
     # ---- actions ----
 
     def action_refresh_all(self) -> None:
         self.action_refresh_calendar()
+        self.action_refresh_tasks()
         self.action_refresh_topic()
         self.action_refresh_word()
 
     def action_refresh_calendar(self) -> None:
         self.run_worker(self._fetch_calendar(), exclusive=True, group="calendar")
+
+    def action_refresh_tasks(self) -> None:
+        self.run_worker(self._fetch_tasks(), exclusive=True, group="tasks")
+
+    async def _fetch_tasks(self) -> None:
+        """Best-effort task fetch — failures are logged but not surfaced."""
+        try:
+            tasks = await asyncio.to_thread(gtasks.fetch_tasks)
+        except gcal.CalendarUnavailable as e:
+            # Calendar fetch already shows the auth error; don't double-notify.
+            logger.warning("tasks fetch skipped: %s", e)
+            return
+        except gtasks.TasksUnavailable:
+            logger.exception("tasks unavailable")
+            return
+        except Exception:  # noqa: BLE001
+            logger.exception("tasks fetch crashed")
+            return
+        self.google_tasks = tasks
 
     def action_refresh_topic(self) -> None:
         for w in self.query(TopicWidget):
@@ -231,6 +271,23 @@ class PersonalizerApp(App):
         self.push_screen(EventReminderModal(target))
 
     # ---- view mode ----
+
+    def _set_view(self, mode: str) -> None:
+        for w in self.query(NextHourWidget):
+            w.view_mode = mode
+        try:
+            self.query_one("#left").border_title = VIEW_LABELS[mode]
+        except Exception:
+            pass
+
+    def action_view_hour(self) -> None:
+        self._set_view(VIEW_HOUR)
+
+    def action_view_today(self) -> None:
+        self._set_view(VIEW_DAY)
+
+    def action_view_week(self) -> None:
+        self._set_view(VIEW_WEEK)
 
     def action_cycle_view(self) -> None:
         for w in self.query(NextHourWidget):
@@ -350,6 +407,113 @@ class PersonalizerApp(App):
             return
         self.notify(f"Updated '{result['summary'][:40]}'.")
         await self._fetch_calendar()
+
+    # ---- Google Tasks CRUD ----
+
+    def action_open_tasks(self) -> None:
+        screen = TasksScreen(
+            tasks=list(self.google_tasks),
+            on_add=self._task_add,
+            on_edit=self._task_edit,
+            on_complete=self._task_complete,
+            on_delete=self._task_delete,
+        )
+        self.push_screen(screen)
+
+    def _task_add(self, screen: TasksScreen) -> None:
+        self.run_worker(self._task_add_flow(screen), group="tasks_crud")
+
+    def _task_edit(self, screen: TasksScreen, task: Task) -> None:
+        self.run_worker(self._task_edit_flow(screen, task), group="tasks_crud")
+
+    def _task_complete(self, screen: TasksScreen, task: Task) -> None:
+        self.run_worker(self._task_complete_flow(screen, task), group="tasks_crud")
+
+    def _task_delete(self, screen: TasksScreen, task: Task) -> None:
+        self.run_worker(self._task_delete_flow(screen, task), group="tasks_crud")
+
+    async def _refresh_screen_tasks(self, screen: TasksScreen) -> None:
+        """Refetch tasks and push them into the open TasksScreen."""
+        try:
+            fresh = await asyncio.to_thread(gtasks.fetch_tasks)
+        except Exception:  # noqa: BLE001
+            logger.exception("tasks refresh inside screen failed")
+            return
+        self.google_tasks = fresh
+        screen.tasks = fresh
+
+    async def _task_add_flow(self, screen: TasksScreen) -> None:
+        result = await self.push_screen_wait(TaskEditModal())
+        if result is None:
+            return
+        try:
+            list_id = await asyncio.to_thread(gtasks.default_tasklist_id)
+            await asyncio.to_thread(
+                gtasks.create_task,
+                list_id,
+                result["title"],
+                result["notes"],
+                result["due"],
+            )
+        except gcal.CalendarUnavailable as e:
+            logger.exception("task create: auth")
+            self.notify(str(e), severity="error", timeout=10)
+            return
+        except Exception as e:  # noqa: BLE001
+            logger.exception("task create failed")
+            self.notify(self._format_error("Add task failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Added task '{result['title'][:40]}'.")
+        await self._refresh_screen_tasks(screen)
+
+    async def _task_edit_flow(self, screen: TasksScreen, target: Task) -> None:
+        result = await self.push_screen_wait(TaskEditModal(task=target))
+        if result is None:
+            return
+        try:
+            await asyncio.to_thread(
+                gtasks.update_task,
+                target.list_id,
+                target.id,
+                result["title"],
+                result["notes"],
+                result["due"],
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("task update %s failed", target.id)
+            self.notify(self._format_error("Edit task failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Updated task '{result['title'][:40]}'.")
+        await self._refresh_screen_tasks(screen)
+
+    async def _task_complete_flow(self, screen: TasksScreen, target: Task) -> None:
+        try:
+            await asyncio.to_thread(
+                gtasks.complete_task, target.list_id, target.id
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("task complete %s failed", target.id)
+            self.notify(self._format_error("Complete failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Completed '{target.title[:40]}'.")
+        await self._refresh_screen_tasks(screen)
+
+    async def _task_delete_flow(self, screen: TasksScreen, target: Task) -> None:
+        confirmed = await self.push_screen_wait(
+            ConfirmModal(f"Delete task '{target.title[:50]}'?")
+        )
+        if not confirmed:
+            return
+        try:
+            await asyncio.to_thread(
+                gtasks.delete_task, target.list_id, target.id
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception("task delete %s failed", target.id)
+            self.notify(self._format_error("Delete task failed", e), severity="error", timeout=12)
+            return
+        self.notify(f"Deleted task '{target.title[:40]}'.")
+        await self._refresh_screen_tasks(screen)
 
     async def _delete_event_flow(self) -> None:
         target = self._selected_event()
