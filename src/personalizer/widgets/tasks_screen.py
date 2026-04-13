@@ -208,16 +208,22 @@ class TasksScreen(ModalScreen[None]):
             )
 
     def on_mount(self) -> None:
+        # Defer the reactive assignment so compose() has fully mounted the DOM
+        # before _refresh_list tries to query #task-list.
+        self.call_after_refresh(self._apply_initial_tasks)
+
+    def _apply_initial_tasks(self) -> None:
         self.tasks = self._initial_tasks
-        self._render()
 
     def watch_tasks(self, _old: list[Task], _new: list[Task]) -> None:
-        self._render()
+        if self.is_mounted:
+            self._refresh_list()
 
     def watch_selected_index(self, _old: int, _new: int) -> None:
-        self._render()
+        if self.is_mounted:
+            self._refresh_list()
 
-    def _render(self) -> None:
+    def _refresh_list(self) -> None:
         try:
             container = self.query_one("#task-list", Vertical)
         except Exception:
