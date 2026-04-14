@@ -11,6 +11,7 @@ from textual.widget import Widget
 from textual.widgets import Static
 
 from ..services.gcal import Event, filter_next_hour, filter_today, filter_week
+from ..services.gtasks import Task
 
 VIEW_HOUR = "hour"
 VIEW_DAY = "day"
@@ -59,9 +60,22 @@ class NextHourWidget(Widget):
     NextHourWidget .selected {
         background: $boost;
     }
+    NextHourWidget .task-header {
+        color: $accent;
+        text-style: bold;
+        padding-bottom: 1;
+    }
+    NextHourWidget .task-row {
+        padding: 0 1;
+        color: $text-muted;
+    }
+    NextHourWidget .task-row.selected {
+        background: $boost;
+    }
     """
 
     events: reactive[list[Event]] = reactive(list, layout=True)
+    tasks: reactive[list[Task]] = reactive(list)
     selected_index: reactive[int] = reactive(0)
     view_mode: reactive[str] = reactive(VIEW_HOUR)
 
@@ -81,6 +95,9 @@ class NextHourWidget(Widget):
 
     def watch_events(self, events: list[Event]) -> None:
         self._render_events(events)
+
+    def watch_tasks(self, _old: list[Task], _new: list[Task]) -> None:
+        self._render_events(self.events)
 
     def watch_selected_index(self, _old: int, _new: int) -> None:
         self._render_events(self.events)
@@ -122,18 +139,36 @@ class NextHourWidget(Widget):
         container.remove_children()
         now = datetime.now(timezone.utc)
         visible = self._visible_events()
+
+        # If no calendar events, show open tasks instead.
         if not visible:
-            container.mount(
-                Static(
-                    {
-                        VIEW_HOUR: "Nothing in the next hour.",
-                        VIEW_DAY: "Nothing scheduled today.",
-                        VIEW_WEEK: "Nothing scheduled this week.",
-                    }.get(self.view_mode, "Nothing to show."),
-                    classes="empty",
+            if self.tasks:
+                container.mount(Static("📋 Tasks", classes="task-header"))
+                sel = max(0, min(self.selected_index, len(self.tasks) - 1))
+                for i, t in enumerate(self.tasks):
+                    due_str = (
+                        f"  ⏰ {t.due.astimezone().strftime('%b %d')}"
+                        if t.due is not None
+                        else ""
+                    )
+                    line = f"{i + 1:>2}. {t.title}{due_str}"
+                    classes = "task-row"
+                    if i == sel:
+                        classes += " selected"
+                    container.mount(Static(line, classes=classes))
+            else:
+                container.mount(
+                    Static(
+                        {
+                            VIEW_HOUR: "Nothing in the next hour.",
+                            VIEW_DAY: "Nothing scheduled today.",
+                            VIEW_WEEK: "Nothing scheduled this week.",
+                        }.get(self.view_mode, "Nothing to show."),
+                        classes="empty",
+                    )
                 )
-            )
             return
+
         sel = max(0, min(self.selected_index, len(visible) - 1))
         for i, evt in enumerate(visible):
             local_start = evt.start.astimezone()

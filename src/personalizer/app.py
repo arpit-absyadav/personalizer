@@ -156,6 +156,8 @@ class PersonalizerApp(App):
     def watch_google_tasks(self, tasks: list[Task]) -> None:
         for w in self.query(ReminderWidget):
             w.tasks = tasks
+        for w in self.query(NextHourWidget):
+            w.tasks = tasks
 
     # ---- actions ----
 

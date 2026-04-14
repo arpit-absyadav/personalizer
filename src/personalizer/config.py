@@ -22,11 +22,25 @@ DEFAULT_TOPIC_AREAS = [
     "Data structures and algorithms",
     "Node.js and NestJS internals",
     "React and modern frontend architecture",
-    "AI engineering (LLMs, RAG, agents, evals)",
-    "Data engineering (pipelines, warehousing, streaming)",
+    # -- AI / ML (deep) --
+    "LLM internals (transformer architecture, attention heads, KV-cache, positional encoding, tokenization, BPE vs SentencePiece)",
+    "Context windows and memory (sliding window, memory augmentation, retrieval-augmented generation, summarisation chains, long-context strategies)",
+    "Hallucination (causes, detection, grounding techniques, factuality scoring, chain-of-verification)",
+    "Prompt engineering (system/user/assistant roles, few-shot, chain-of-thought, ReAct, tree-of-thought, self-consistency)",
+    "AI agents and agentic flows (tool use, function calling, planning loops, reflection, multi-agent orchestration, human-in-the-loop)",
+    "RAG pipelines (chunking strategies, embedding models, vector stores, hybrid search, re-ranking, query rewriting)",
+    "Fine-tuning and alignment (LoRA, QLoRA, RLHF, DPO, instruction tuning, catastrophic forgetting)",
+    "Evaluation and evals (BLEU, ROUGE, LLM-as-judge, human evals, A/B testing prompts, red-teaming)",
+    "ML fundamentals (gradient descent, backprop, regularisation, bias-variance, overfitting, cross-validation)",
+    "Deep learning architectures (CNNs, RNNs, LSTMs, GANs, diffusion models, vision transformers)",
+    "MLOps (experiment tracking, model registry, feature stores, model serving, drift detection, A/B deployment)",
+    # -- Data Engineering --
+    "Data engineering (batch vs streaming, ELT/ETL, data lakehouse, Spark internals, Kafka, Flink, dbt)",
+    "Data modelling and warehousing (star schema, slowly changing dimensions, data vault, partitioning, materialised views)",
+    "Data quality and observability (data contracts, great expectations, schema evolution, lineage, freshness SLAs)",
     "Data analysis and analytics engineering",
+    # -- Infrastructure --
     "DevOps (CI/CD, Kubernetes, observability)",
-    "MLOps and AIOps",
     "Distributed systems and scalability",
     "Database internals and query optimization",
 ]

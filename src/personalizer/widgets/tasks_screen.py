@@ -201,7 +201,7 @@ class TasksScreen(ModalScreen[None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="panel"):
             yield Static("📋 TASKS", id="panel-title")
-            yield Vertical(id="task-list")
+            yield Vertical(id="task-list", can_focus=True)
             yield Static(
                 "↑/↓ select  ·  a add  ·  e edit  ·  d done  ·  D delete  ·  Esc close",
                 id="help",
@@ -214,6 +214,10 @@ class TasksScreen(ModalScreen[None]):
 
     def _apply_initial_tasks(self) -> None:
         self.tasks = self._initial_tasks
+        try:
+            self.query_one("#task-list").focus()
+        except Exception:
+            pass
 
     def watch_tasks(self, _old: list[Task], _new: list[Task]) -> None:
         if self.is_mounted:
@@ -229,6 +233,8 @@ class TasksScreen(ModalScreen[None]):
         except Exception:
             return
         container.remove_children()
+        # Re-focus the list so arrow keys keep working after CRUD modals close.
+        container.focus()
         if not self.tasks:
             container.mount(
                 Static("No open tasks. Press 'a' to create one.", classes="empty")

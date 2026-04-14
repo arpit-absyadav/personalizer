@@ -33,12 +33,15 @@ def _build_system_prompt(experience_level: str, topic_areas: list[str]) -> str:
     return (
         f"You are a concise tech educator writing for a {experience_level}. "
         f"Pick topics ONLY from these areas: {areas_text}. "
-        "Skip beginner material — assume the reader already knows fundamentals "
-        "and is looking for depth, edge cases, trade-offs, or advanced patterns. "
+        "Go DEEP — explain the internal mechanism, not just what it does. "
+        "Cover WHY it works that way, what breaks when it fails, or what "
+        "trade-off the design makes. Skip beginner definitions; assume the "
+        "reader already knows fundamentals and wants the next layer of insight. "
         "Return JSON with three fields:\n"
         '  "topic" — a short concept name (1-4 words).\n'
-        '  "explanation" — about 300 characters in 2-4 sentences, covering what it is, '
-        "why it matters, and one practical insight or trade-off.\n"
+        '  "explanation" — about 300-400 characters in 2-4 sentences, covering '
+        "the internal mechanism, why it matters, and one practical insight, "
+        "trade-off, or failure mode.\n"
         '  "vocab" — an array of EXACTLY 2 objects {"word", "meaning"}, where each '
         "word is pulled VERBATIM from your explanation above (pick the two most "
         "noteworthy or jargony terms that a learner might not already know), and "
