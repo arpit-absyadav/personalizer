@@ -42,10 +42,12 @@ def _build_system_prompt(experience_level: str, topic_areas: list[str]) -> str:
         '  "explanation" — about 300-400 characters in 2-4 sentences, covering '
         "the internal mechanism, why it matters, and one practical insight, "
         "trade-off, or failure mode.\n"
-        '  "vocab" — an array of EXACTLY 2 objects {"word", "meaning"}, where each '
-        "word is pulled VERBATIM from your explanation above (pick the two most "
-        "noteworthy or jargony terms that a learner might not already know), and "
-        '"meaning" is a plain-English definition of 8-15 words.\n'
+        '  "vocab" — an array of EXACTLY 2 objects {"word", "meaning", "example"}, '
+        "where each word is pulled VERBATIM from your explanation above (pick the "
+        "two most noteworthy or jargony terms that a learner might not already "
+        'know). "meaning" is a plain-English definition of 8-15 words, and '
+        '"example" is ONE simple natural sentence (8-15 words) showing the word '
+        "used in context.\n"
         "Pick a fresh, varied concept each time. No preamble, no markdown."
     )
 
@@ -123,7 +125,7 @@ def record_topic(topic: str, path: Path = paths.CACHE_TOPIC_HISTORY) -> None:
 
 
 def _parse_vocab(raw: Any) -> list[dict[str, str]]:
-    """Coerce model output into a list of {word, meaning} dicts (max 2)."""
+    """Coerce model output into a list of {word, meaning, example} dicts (max 2)."""
     if not isinstance(raw, list):
         return []
     out: list[dict[str, str]] = []
@@ -132,8 +134,9 @@ def _parse_vocab(raw: Any) -> list[dict[str, str]]:
             continue
         word = str(item.get("word", "")).strip()
         meaning = str(item.get("meaning", "")).strip()
+        example = str(item.get("example", "")).strip()
         if word and meaning:
-            out.append({"word": word, "meaning": meaning})
+            out.append({"word": word, "meaning": meaning, "example": example})
         if len(out) == 2:
             break
     return out

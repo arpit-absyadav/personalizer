@@ -88,10 +88,13 @@ class TopicWidget(Widget):
         body = self.query_one("#topic-body", Static)
         body.update(data["explanation"])
         body.remove_class("error")
-        vocab_lines = [
-            f"• [b]{v['word']}[/b] — {v['meaning']}"
-            for v in data.get("vocab", [])
-        ]
+        vocab_lines: list[str] = []
+        for v in data.get("vocab", []):
+            line = f"• [b]{v['word']}[/b] — {v['meaning']}"
+            example = v.get("example", "")
+            if example:
+                line += f"\n  e.g. [i]{example}[/i]"
+            vocab_lines.append(line)
         vocab_text = "📖 Vocab:\n" + "\n".join(vocab_lines) if vocab_lines else ""
         self.query_one("#topic-vocab", Static).update(vocab_text)
 
